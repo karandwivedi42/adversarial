@@ -21,6 +21,7 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--attack', '-a', action='store_true', help='attack')
+parser.add_argument('--visualize', '-v', action='store_true', help='visualize some perturbed images')
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -63,7 +64,7 @@ class AttackPGD(nn.Module):
 
     def forward(self, inputs, targets):
         if not args.attack:
-            return self.basic_net(inputs)
+            return self.basic_net(inputs), inputs
 
         x = inputs.detach()
         if self.rand:
@@ -78,7 +79,7 @@ class AttackPGD(nn.Module):
             x = torch.min(torch.max(x, inputs - self.epsilon), inputs + self.epsilon)
             x = torch.clamp(x, 0, 1)
 
-        return self.basic_net(x)
+        return self.basic_net(x), x
 
 
 print('==> Building model..')
@@ -132,7 +133,7 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(iterator):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        outputs = net(inputs, targets)
+        outputs, pert_inputs = net(inputs, targets)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
@@ -156,14 +157,19 @@ def test(epoch):
         iterator = tqdm(testloader, ncols=0, leave=False)
         for batch_idx, (inputs, targets) in enumerate(iterator):
             inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs, targets)
-            loss = criterion(outputs, targets)
-
+            with torch.no_grad():
+                outputs, pert_inputs = net(inputs, targets)
+                loss = criterion(outputs, targets)
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
             iterator.set_description(str(predicted.eq(targets).sum().item()/targets.size(0)))
+
+            if args.visualize and batch_idx == 0:
+                if not os.path.isdir('viz'): os.mkdir('viz')
+                torchvision.utils.save_image(inputs, 'viz/{}_clean.jpg'.format(epoch))
+                torchvision.utils.save_image(pert_inputs, 'viz/{}_pert.jpg'.format(epoch))
 
     # Save checkpoint.
     acc = 100.*correct/total
